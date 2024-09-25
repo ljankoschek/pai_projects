@@ -44,6 +44,15 @@ def log_posterior_probs(x):
 
     # TODO: enter your code here
 
+    # Posterior probability = prior probability + new evidence (likelihood)
+    # log_likelihood from https://blogs.sas.com/content/iml/2017/06/12/log-likelihood-function-in-sas.html
+    log_likelihood = np.array([np.sum(h.logpdf(x)) for h in HYPOTHESIS_SPACE])
+    # we need to apply log also to the prior probs
+    log_p = np.log(PRIOR_PROBS) + log_likelihood
+
+    # to avoid underflow we use the log-sum-exp trick (normalization)
+    log_p = log_p - logsumexp(log_p)
+
     assert log_p.shape == (3,)
     return log_p
 
