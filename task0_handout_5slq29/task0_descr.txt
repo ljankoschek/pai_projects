@@ -1,0 +1,4 @@
+We computed the Bayesian log-posterior probabilities by adding the prior probabilities and the likelihoods.
+We work in a logarithmic scale to convert multiplications (likelihood = product of pdf terms) to additons, so that we can avoid underflow (e.g. when multiplying very small numbers) (log-sum-exp trick).
+Since we want the log posterior probabilities, we need to compute the log of the prior probabilities and calculate the log-likelihoods by summing the log probability densitiy function terms.
+Then we normalize our posterior probabilities by using the logsumexp function from scipy and subtracting this from our posterior probabilities.
