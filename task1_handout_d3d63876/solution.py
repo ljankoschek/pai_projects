@@ -5,7 +5,6 @@ import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 import matplotlib.pyplot as plt
 from matplotlib import cm
-from sklearn.gaussian_process.kernels import RBF, DotProduct
 
 
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
@@ -24,18 +23,20 @@ class Model(object):
     without changing their signatures, but are allowed to create additional methods.
     """
 
-    def __init__(self):
+    def __init__(self, perform_undersampling : bool, undersampling_size : int):
         """
         Initialize your model here.
         We already provide a random number generator for reproducibility.
         """
         self.rng = np.random.default_rng(seed=0)
+        self.perform_undersampling = perform_undersampling
+        self.undersampling_size = undersampling_size
         self.kernel = DotProduct()
         self.gp = GaussianProcessRegressor(self.kernel,n_restarts_optimizer=10)
 
         # TODO: Add custom initialization for your model here if necessary
 
-    def generate_predictions(self, test_coordinates: np.ndarray, test_area_flags: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def generate_predictions(self, test_coordinates: np.ndarray, test_area_flags: np.ndarray) -> (np.ndarray, np.ndarray, np.ndarray):
         """
         Predict the pollution concentration for a given set of city_areas.
         :param test_coordinates: city_areas as a 2d NumPy float array of shape (NUM_SAMPLES, 2)
@@ -60,6 +61,13 @@ class Model(object):
         :param train_targets: Training pollution concentrations as a 1d NumPy float array of shape (NUM_SAMPLES,)
         :param train_area_flags: Binary variable denoting whether the 2D training point is in the residential area (1) or not (0)
         """
+        if self.perform_undersampling:
+            train_coordinates, train_area_flags, train_targets = undersample(
+                train_coordinates,
+                train_area_flags,
+                train_targets,
+                self.undersampling_size
+            )
         self.gp.fit(train_coordinates,train_targets)
         print("Log marginal likelyhood for kernel:")
         print(self.gp.log_marginal_likelihood(theta=self.gp.kernel_.theta))
@@ -130,6 +138,7 @@ def identify_city_area_flags(grid_coordinates):
 
     return area_flags
 
+
 # You don't have to change this function
 def execute_extended_evaluation(model: Model, output_dir: str = '/results'):
     """
@@ -146,7 +155,7 @@ def execute_extended_evaluation(model: Model, output_dir: str = '/results'):
     )
     visualization_grid = np.stack((grid_lon.flatten(), grid_lat.flatten()), axis=1)
     grid_area_flags = identify_city_area_flags(visualization_grid)
-    
+
     # Obtain predictions, means, and stddevs over the entire map
     predictions, gp_mean, gp_stddev = model.generate_predictions(visualization_grid, grid_area_flags)
     predictions = np.reshape(predictions, (EVALUATION_GRID_POINTS, EVALUATION_GRID_POINTS))
@@ -176,12 +185,13 @@ def extract_area_information(train_x: np.ndarray, test_x: np.ndarray) -> typing.
     :return: Tuple of (training features' 2D coordinates, training features' city_area information,
         test features' 2D coordinates, test features' city_area information)
     """
-    train_coordinates = np.zeros((train_x.shape[0], 2), dtype=float)
-    train_area_flags = np.zeros((train_x.shape[0],), dtype=bool)
-    test_coordinates = np.zeros((test_x.shape[0], 2), dtype=float)
-    test_area_flags = np.zeros((test_x.shape[0],), dtype=bool)
 
-    #TODO: Extract the city_area information from the training and test features
+
+
+    train_coordinates = train_x[:, :2]
+    train_area_flags = train_x[:, -1].astype(bool)
+    test_coordinates = test_x[:, :2]
+    test_area_flags = test_x[:, -1].astype(bool)
 
     assert train_coordinates.shape[0] == train_area_flags.shape[0] and test_coordinates.shape[0] == test_area_flags.shape[0]
     assert train_coordinates.shape[1] == 2 and test_coordinates.shape[1] == 2
@@ -215,3 +225,13 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def undersample(
+        train_coordinates: np.ndarray,
+        train_area_flags: np.ndarray,
+        train_targets: np.ndarray,
+        n: int
+) -> (np.ndarray, np.ndarray):
+    random_indices = np.random.choice(train_coordinates.shape[0], size=n, replace=False)
+    return train_coordinates[random_indices], train_area_flags[random_indices], train_targets[random_indices]
