@@ -30,7 +30,7 @@ class Model(object):
         We already provide a random number generator for reproducibility.
         """
         self.rng = np.random.default_rng(seed=0)
-        self.kernel = DotProduct
+        self.kernel = DotProduct()
         self.gp = GaussianProcessRegressor(self.kernel,n_restarts_optimizer=10)
 
         # TODO: Add custom initialization for your model here if necessary
@@ -46,8 +46,7 @@ class Model(object):
         """
 
         # TODO: Use your GP to estimate the posterior mean and stddev for each city_area here
-        gp_mean = np.zeros(test_coordinates.shape[0], dtype=float)
-        gp_std = np.zeros(test_coordinates.shape[0], dtype=float)
+        gp_mean, gp_std = self.gp.predict(test_coordinates,  return_std=True)
 
         # TODO: Use the GP posterior to form your predictions here
         predictions = gp_mean
