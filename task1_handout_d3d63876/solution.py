@@ -73,13 +73,12 @@ class Model(object):
         gp_mean, gp_std = self.gp.predict(test_coordinates,  return_std=True)
 
         z_q = norm.ppf(0.95)
-        predictions = []
+        predictions = np.ndarray([])
         # TODO: Use the GP posterior to form your predictions here
+        predictions = gp_mean
         for i in range(gp_mean.size):
-            if test_area_flags[i] == 1:
-                predictions.append(gp_mean[i] + z_q * gp_std[i])
-            else:
-                predictions.append(gp_mean[i])
+            if test_area_flags[i] == 1.0:
+               predictions[i] = gp_mean[i] + (z_q * gp_std[i])
 
 
 
