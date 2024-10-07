@@ -5,6 +5,7 @@ import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 import matplotlib.pyplot as plt
 from matplotlib import cm
+from sklearn.gaussian_process.kernels import RBF, DotProduct
 
 
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
@@ -29,6 +30,8 @@ class Model(object):
         We already provide a random number generator for reproducibility.
         """
         self.rng = np.random.default_rng(seed=0)
+        self.kernel = DotProduct
+        self.gp = GaussianProcessRegressor(self.kernel,n_restarts_optimizer=10)
 
         # TODO: Add custom initialization for your model here if necessary
 
@@ -58,9 +61,10 @@ class Model(object):
         :param train_targets: Training pollution concentrations as a 1d NumPy float array of shape (NUM_SAMPLES,)
         :param train_area_flags: Binary variable denoting whether the 2D training point is in the residential area (1) or not (0)
         """
+        self.gp.fit(train_coordinates,train_targets)
+        print("Log marginal likelyhood for kernel:")
+        print(self.gp.log_marginal_likelihood(theta=self.gp.kernel_.theta))
 
-        # TODO: Fit your model here
-        pass
 
 # You don't have to change this function
 def calculate_cost(ground_truth: np.ndarray, predictions: np.ndarray, area_flags: np.ndarray) -> float:
