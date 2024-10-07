@@ -7,7 +7,10 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from sklearn.model_selection import train_test_split
 import random
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.cluster import KMeans
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern
+from scipy.spatial import cKDTree
 from scipy.stats import norm
 from sklearn.cluster import KMeans
 
@@ -18,6 +21,7 @@ EVALUATION_GRID_POINTS = 300  # Number of grid points used in extended evaluatio
 # Cost function constants
 COST_W_UNDERPREDICT = 50.0
 COST_W_NORMAL = 1.0
+
 
 def undersample(
         train_coordinates: np.ndarray,
@@ -91,18 +95,29 @@ class Model(object):
     without changing their signatures, but are allowed to create additional methods.
     """
 
-    def __init__(self, perform_undersampling : bool, undersampling_size : int):
+    def __init__(self):
         """
         Initialize your model here.
         We already provide a random number generator for reproducibility.
         """
-        self.rng = np.random.default_rng(seed=0)
-        self.perform_undersampling = perform_undersampling
-        self.undersampling_size = undersampling_size
-        self.kernel = Matern(length_scale=15.0, nu=1.5, length_scale_bounds="fixed")
-        self.gp = GaussianProcessRegressor(self.kernel,n_restarts_optimizer=50)
+        # OLD CODE
+        #self.rng = np.random.default_rng(seed=0)
+        #self.perform_undersampling = True
+        #self.undersampling_size = 5000
+        #self.kernel = Matern(length_scale=15.0, nu=1.5, length_scale_bounds="fixed")
+        #self.gp = GaussianProcessRegressor(self.kernel,n_restarts_optimizer=50)
 
         # TODO: Add custom initialization for your model here if necessary
+        # we use Approximation of GP with multiple local GPs for the candidate residential areas
+        # for the residential areas we use a global gp
+        self.global_kernel = Matern(length_scale=21.0, nu=1.5, length_scale_bounds="fixed") # kernel for residential areas
+        self.global_gp = GaussianProcessRegressor(kernel=self.global_kernel, n_restarts_optimizer=10) # global gp for residential areas
+
+        self.num_clusters = 14 # numbers of clusters (in candidate residentiala areas)
+        self.cluster_centers = None  # store the cluster centers
+        self.local_gps = []  # store local GP models for each cluster
+        self.kmeans = KMeans(n_clusters=self.num_clusters, random_state=0, n_init="auto") # init KMeans clustering model
+        
 
     def generate_predictions(self, test_coordinates: np.ndarray, test_area_flags: np.ndarray) -> (np.ndarray, np.ndarray, np.ndarray):
         """
@@ -114,20 +129,60 @@ class Model(object):
             containing your predictions, the GP posterior mean, and the GP posterior stddev (in that order)
         """
 
+        # OLD CODE
+        #z_q = norm.ppf(0.95)
+        #predictions = np.ndarray([])
+        #predictions = gp_mean
+        #for i in range(gp_mean.size):
+        #    if test_area_flags[i] == 1.0:
+        #       predictions[i] = gp_mean[i] + 50000*(z_q * gp_std[i])
+        
+
         # TODO: Use your GP to estimate the posterior mean and stddev for each city_area here
-        gp_mean, gp_std = self.gp.predict(test_coordinates,  return_std=True)
+        # keep track of original indices so we can put the predictions back together in the correct order
+        original_indices = np.arange(len(test_coordinates))
 
-        z_q = norm.ppf(0.95)
-        predictions = np.ndarray([])
-        # TODO: Use the GP posterior to form your predictions here
-        predictions = gp_mean
-        for i in range(gp_mean.size):
-            if test_area_flags[i] == 1.0:
-               predictions[i] = gp_mean[i] + 50000*(z_q * gp_std[i])
+        ## TODO: Use the GP posterior to form your predictions here        
+        # create return ndarrays
+        predictions = np.zeros(len(test_coordinates))
+        gp_means = np.zeros(len(test_coordinates))
+        gp_stds = np.zeros(len(test_coordinates))
 
+        # split test coordinates into residential areas and candidate residential areas (area flag = 1.0)
+        mask = test_area_flags == 1.0
+        candidate_test_indices = original_indices[mask]
+        residential_areas_test_indices = original_indices[~mask]
+        candidate_test_coordinates = test_coordinates[candidate_test_indices]
+        residential_areas_test_coordinates = test_coordinates[residential_areas_test_indices]
+        
+        # use cKDTree structure to find nearest cluster for each candidate test point
+        # https://ceur-ws.org/Vol-2786/Paper28.pdf
+        tree = cKDTree(self.cluster_centers)
+        _, nearest_clusters = tree.query(candidate_test_coordinates)
 
+        # predict test points for each cluster (candidate residential areas) with local gp
+        for cluster_idx in range(self.num_clusters):
+            # identify points in cluster and get indices
+            points_in_cluster = candidate_test_coordinates[nearest_clusters == cluster_idx]
+            points_indices_in_cluster = candidate_test_indices[nearest_clusters == cluster_idx]
+            
+            gp_model = self.local_gps[cluster_idx]
+            gp_mean, gp_std = gp_model.predict(points_in_cluster, return_std=True)
+            gp_means[points_indices_in_cluster] = gp_mean
+            gp_stds[points_indices_in_cluster] = gp_std
 
-        return predictions, gp_mean, gp_std
+            # asymmetric cost
+            # compute modified prediction to avoid underestimating the pollution concentration in the candidate residential areas
+            z_q = norm.ppf(0.95)
+            predictions[points_indices_in_cluster] = gp_mean + 68000 * (z_q * gp_std)
+            
+        # predict for residential area coordinates using global gp
+        gp_mean, gp_std = self.global_gp.predict(residential_areas_test_coordinates, return_std=True)
+        predictions[residential_areas_test_indices] = gp_mean
+        gp_means[residential_areas_test_indices] = gp_mean
+        gp_stds[residential_areas_test_indices] = gp_std
+
+        return predictions, gp_means, gp_stds
 
 
     def train_model(self, train_targets: np.ndarray, train_coordinates: np.ndarray, train_area_flags: np.ndarray):
@@ -137,24 +192,50 @@ class Model(object):
         :param train_targets: Training pollution concentrations as a 1d NumPy float array of shape (NUM_SAMPLES,)
         :param train_area_flags: Binary variable denoting whether the 2D training point is in the residential area (1) or not (0)
         """
-       # if self.perform_undersampling:
+        # OLD CODE
+        # if self.perform_undersampling:
         #    train_coordinates, train_targets = stratified_cluster_undersample(train_coordinates, train_area_flags, train_targets, 1000)
+        #
+        #if self.perform_undersampling:
+        #    train_coordinates, train_targets = undersample(
+        #        train_coordinates,
+        #        train_area_flags,
+        #        train_targets,
+        #        self.undersampling_size
+        #    )
+        #
+        #self.gp.fit(train_coordinates,train_targets)
+        #print("Log marginal likelyhood for kernel:")
+        #print(self.gp.log_marginal_likelihood(theta=self.gp.kernel_.theta))
+        #print("Parameters")
+        #print(self.gp.kernel_.get_params())
+        
+        # split train coordinates into residential areas and candidate residential areas (area flag = 1.0)
+        mask = train_area_flags == 1.0
+        candidate_train_coordinates = train_coordinates[mask]
+        candidate_train_targets = train_targets[mask]
 
-        if self.perform_undersampling:
-            train_coordinates, train_targets = undersample(
-                train_coordinates,
-                train_area_flags,
-                train_targets,
-                self.undersampling_size
-            )
+        residential_area_train_coordinates = train_coordinates[~mask]
+        residential_area_train_targets = train_targets[~mask]
 
+        # fit KMeans clustering and store cluster centers
+        self.kmeans.fit(candidate_train_coordinates)
+        self.cluster_centers = self.kmeans.cluster_centers_
 
+        for cluster_idx in range(self.num_clusters):
+            # get points and targets of current cluster
+            cluster_indices = np.where(self.kmeans.labels_ == cluster_idx)[0]
+            cluster_points = candidate_train_coordinates[cluster_indices]
+            cluster_targets = candidate_train_targets[cluster_indices]
 
-        self.gp.fit(train_coordinates,train_targets)
-        print("Log marginal likelyhood for kernel:")
-        print(self.gp.log_marginal_likelihood(theta=self.gp.kernel_.theta))
-        print("Parameters")
-        print(self.gp.kernel_.get_params())
+            # train gp model for current cluster
+            kernel = Matern(length_scale=13.0, nu=1.5, length_scale_bounds="fixed")
+            gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10)
+            gp.fit(cluster_points, cluster_targets)
+            self.local_gps.append(gp)
+        
+        # train global gp
+        self.global_gp.fit(residential_area_train_coordinates, residential_area_train_targets)
 
 
 # You don't have to change this function
@@ -296,7 +377,7 @@ def main():
     
     # Fit the model
     print('Training model')
-    model = Model(True, 500)
+    model = Model()
     model.train_model(train_y, train_coordinates, train_area_flags)
 
     # Predict on the test features
