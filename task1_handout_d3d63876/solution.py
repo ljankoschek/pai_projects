@@ -8,10 +8,11 @@ from matplotlib import cm
 from sklearn.model_selection import train_test_split
 import random
 from sklearn.preprocessing import MinMaxScaler
+from scipy.stats import norm
 
 
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
-EXTENDED_EVALUATION = False
+EXTENDED_EVALUATION = True
 EVALUATION_GRID_POINTS = 300  # Number of grid points used in extended evaluation
 
 # Cost function constants
@@ -71,8 +72,15 @@ class Model(object):
         # TODO: Use your GP to estimate the posterior mean and stddev for each city_area here
         gp_mean, gp_std = self.gp.predict(test_coordinates,  return_std=True)
 
+        z_q = norm.ppf(0.95)
+        predictions = []
         # TODO: Use the GP posterior to form your predictions here
-        predictions = gp_mean
+        for i in range(gp_mean.size):
+            if test_area_flags[i] == 1:
+                predictions.append(gp_mean[i] + z_q * gp_std[i])
+            else:
+                predictions.append(gp_mean[i])
+
 
 
         return predictions, gp_mean, gp_std
@@ -239,7 +247,7 @@ def main():
     
     # Fit the model
     print('Training model')
-    model = Model(True, 1000)
+    model = Model(True, 2000)
     model.train_model(train_y, train_coordinates, train_area_flags)
 
     # Predict on the test features
