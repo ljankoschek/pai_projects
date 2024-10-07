@@ -9,10 +9,10 @@ from sklearn.model_selection import train_test_split
 import random
 from sklearn.preprocessing import MinMaxScaler
 from scipy.stats import norm
-
+from sklearn.cluster import KMeans
 
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
-EXTENDED_EVALUATION = True
+EXTENDED_EVALUATION = False
 EVALUATION_GRID_POINTS = 300  # Number of grid points used in extended evaluation
 
 # Cost function constants
@@ -34,10 +34,55 @@ def undersample(
     train_targets = train_test_split(train_targets, test_size=len(train_targets) - n,
                                      stratify=train_area_flags, random_state=random_state)[0]
 
+
     return train_coordinates, train_targets
 
+def stratified_cluster_undersample(train_coordinates: np.ndarray,
+        train_area_flags: np.ndarray, train_targets: np.ndarray, samples: int):
+    clusters = 15
+    train_coordinates_special = train_coordinates[train_area_flags == 1.0]
+    train_targets_special = train_targets[train_area_flags == 1.0]
+    train_coordinates_notSpecial = train_coordinates[train_area_flags == 0.0]
+    train_targets_notSpecial = train_targets[train_area_flags == 0.0]
+    specialSize = train_coordinates_special.size / train_coordinates.size
+    notSpecialSize = train_coordinates_notSpecial.size / train_coordinates.size
+    kmeansSpecial = KMeans(n_clusters=15, random_state=0, n_init="auto")
+    clusters_special = kmeansSpecial.fit(train_coordinates_special)
+    labels = kmeansSpecial.labels_
 
 
+
+    random_state1 = random.randint(0, 4294967295)
+    random_state2 = random.randint(0, 4294967295)
+
+    train_coordinates1 = train_test_split(train_coordinates_notSpecial, test_size=int(len(train_coordinates_notSpecial) - (notSpecialSize*samples)),
+                                           random_state=random_state1)[0]
+    train_targets1 = train_test_split(train_targets_notSpecial,
+                                          test_size=int(len(train_targets_notSpecial) - (notSpecialSize * samples)),
+                                           random_state=random_state1)[0]
+
+    train_coordinates2 = train_test_split(train_targets_special, test_size= int(len(train_targets_special) - (specialSize*samples)),
+                                     stratify=labels, random_state=random_state2)[0]
+    train_targets2 = train_test_split(train_targets_special, test_size= int(len(train_targets_special) - (specialSize*samples)),
+                                     stratify=labels, random_state=random_state2)[0]
+
+    train_coordinates = np.stack((train_coordinates1,train_coordinates2),axis=1)
+    train_targets = np.stack((train_targets1,train_targets2),axis=1)
+
+    return train_coordinates, train_targets
+
+    #sortedData = [[] for i in range(clusters)]
+    #for i in range(clusters):
+     #   for j in range(labels.size):
+      #      if labels[j] == i:
+      #          sortedData[i].append(train_coordinates_special[j])
+
+   # testData = [[] for i in range(clusters)]
+   # for i in range(clusters):
+    #    for j in range(samples):
+
+
+    print(labels)
 
 class Model(object):
     """
@@ -55,7 +100,7 @@ class Model(object):
         self.perform_undersampling = perform_undersampling
         self.undersampling_size = undersampling_size
         self.kernel = Matern(length_scale=15.0, nu=1.5, length_scale_bounds="fixed")
-        self.gp = GaussianProcessRegressor(self.kernel,n_restarts_optimizer=20)
+        self.gp = GaussianProcessRegressor(self.kernel,n_restarts_optimizer=50)
 
         # TODO: Add custom initialization for your model here if necessary
 
@@ -78,7 +123,7 @@ class Model(object):
         predictions = gp_mean
         for i in range(gp_mean.size):
             if test_area_flags[i] == 1.0:
-               predictions[i] = gp_mean[i] + (z_q * gp_std[i])
+               predictions[i] = gp_mean[i] + 50000*(z_q * gp_std[i])
 
 
 
@@ -92,6 +137,9 @@ class Model(object):
         :param train_targets: Training pollution concentrations as a 1d NumPy float array of shape (NUM_SAMPLES,)
         :param train_area_flags: Binary variable denoting whether the 2D training point is in the residential area (1) or not (0)
         """
+       # if self.perform_undersampling:
+        #    train_coordinates, train_targets = stratified_cluster_undersample(train_coordinates, train_area_flags, train_targets, 1000)
+
         if self.perform_undersampling:
             train_coordinates, train_targets = undersample(
                 train_coordinates,
@@ -99,6 +147,8 @@ class Model(object):
                 train_targets,
                 self.undersampling_size
             )
+
+
 
         self.gp.fit(train_coordinates,train_targets)
         print("Log marginal likelyhood for kernel:")
@@ -246,7 +296,7 @@ def main():
     
     # Fit the model
     print('Training model')
-    model = Model(True, 2000)
+    model = Model(True, 500)
     model.train_model(train_y, train_coordinates, train_area_flags)
 
     # Predict on the test features
