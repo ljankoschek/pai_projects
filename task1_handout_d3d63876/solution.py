@@ -5,6 +5,9 @@ import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 import matplotlib.pyplot as plt
 from matplotlib import cm
+from sklearn.model_selection import train_test_split
+import random
+from sklearn.preprocessing import MinMaxScaler
 
 
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
@@ -14,6 +17,25 @@ EVALUATION_GRID_POINTS = 300  # Number of grid points used in extended evaluatio
 # Cost function constants
 COST_W_UNDERPREDICT = 50.0
 COST_W_NORMAL = 1.0
+
+def undersample(
+        train_coordinates: np.ndarray,
+        train_area_flags: np.ndarray,
+        train_targets: np.ndarray,
+        n: int
+) -> (np.ndarray, np.ndarray):
+    random_state = random.randint(0, 4294967295)
+
+    # Perform stratified sampling with the random random_state
+    train_coordinates = train_test_split(train_coordinates, test_size=len(train_coordinates) - n,
+                                         stratify=train_area_flags, random_state=random_state)[0]
+
+    train_targets = train_test_split(train_targets, test_size=len(train_targets) - n,
+                                     stratify=train_area_flags, random_state=random_state)[0]
+
+    return train_coordinates, train_targets
+
+
 
 
 class Model(object):
@@ -31,8 +53,8 @@ class Model(object):
         self.rng = np.random.default_rng(seed=0)
         self.perform_undersampling = perform_undersampling
         self.undersampling_size = undersampling_size
-        self.kernel = DotProduct()
-        self.gp = GaussianProcessRegressor(self.kernel,n_restarts_optimizer=10)
+        self.kernel = Matern(length_scale=15.0, nu=1.5, length_scale_bounds="fixed")
+        self.gp = GaussianProcessRegressor(self.kernel,n_restarts_optimizer=20)
 
         # TODO: Add custom initialization for your model here if necessary
 
@@ -52,7 +74,9 @@ class Model(object):
         # TODO: Use the GP posterior to form your predictions here
         predictions = gp_mean
 
+
         return predictions, gp_mean, gp_std
+
 
     def train_model(self, train_targets: np.ndarray, train_coordinates: np.ndarray, train_area_flags: np.ndarray):
         """
@@ -62,15 +86,18 @@ class Model(object):
         :param train_area_flags: Binary variable denoting whether the 2D training point is in the residential area (1) or not (0)
         """
         if self.perform_undersampling:
-            train_coordinates, train_area_flags, train_targets = undersample(
+            train_coordinates, train_targets = undersample(
                 train_coordinates,
                 train_area_flags,
                 train_targets,
                 self.undersampling_size
             )
+
         self.gp.fit(train_coordinates,train_targets)
         print("Log marginal likelyhood for kernel:")
         print(self.gp.log_marginal_likelihood(theta=self.gp.kernel_.theta))
+        print("Parameters")
+        print(self.gp.kernel_.get_params())
 
 
 # You don't have to change this function
@@ -189,6 +216,7 @@ def extract_area_information(train_x: np.ndarray, test_x: np.ndarray) -> typing.
 
 
     train_coordinates = train_x[:, :2]
+    print(train_coordinates)
     train_area_flags = train_x[:, -1].astype(bool)
     test_coordinates = test_x[:, :2]
     test_area_flags = test_x[:, -1].astype(bool)
@@ -211,13 +239,14 @@ def main():
     
     # Fit the model
     print('Training model')
-    model = Model()
+    model = Model(True, 1000)
     model.train_model(train_y, train_coordinates, train_area_flags)
 
     # Predict on the test features
     print('Predicting on test features')
     predictions = model.generate_predictions(test_coordinates, test_area_flags)
     print(predictions)
+
 
     if EXTENDED_EVALUATION:
         execute_extended_evaluation(model, output_dir='.')
@@ -227,11 +256,3 @@ if __name__ == "__main__":
     main()
 
 
-def undersample(
-        train_coordinates: np.ndarray,
-        train_area_flags: np.ndarray,
-        train_targets: np.ndarray,
-        n: int
-) -> (np.ndarray, np.ndarray):
-    random_indices = np.random.choice(train_coordinates.shape[0], size=n, replace=False)
-    return train_coordinates[random_indices], train_area_flags[random_indices], train_targets[random_indices]
