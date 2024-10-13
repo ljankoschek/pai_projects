@@ -173,7 +173,6 @@ class Model(object):
 
             # asymmetric cost
             # compute modified prediction to avoid underestimating the pollution concentration in the candidate residential areas
-            z_q = norm.ppf(0.95)
             predictions[points_indices_in_cluster] = gp_mean + 152000 * gp_std
             
         # predict for residential area coordinates using global gp
