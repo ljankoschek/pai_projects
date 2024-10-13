@@ -174,7 +174,7 @@ class Model(object):
             # asymmetric cost
             # compute modified prediction to avoid underestimating the pollution concentration in the candidate residential areas
             z_q = norm.ppf(0.95)
-            predictions[points_indices_in_cluster] = gp_mean + 68000 * (z_q * gp_std)
+            predictions[points_indices_in_cluster] = gp_mean + 94000 * (z_q * gp_std)
             
         # predict for residential area coordinates using global gp
         gp_mean, gp_std = self.global_gp.predict(residential_areas_test_coordinates, return_std=True)
@@ -229,7 +229,7 @@ class Model(object):
             cluster_targets = candidate_train_targets[cluster_indices]
 
             # train gp model for current cluster
-            kernel = Matern(length_scale=13.0, nu=1.5, length_scale_bounds="fixed")
+            kernel = Matern(length_scale=21.0, nu=1.5, length_scale_bounds="fixed")
             gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10)
             gp.fit(cluster_points, cluster_targets)
             self.local_gps.append(gp)
