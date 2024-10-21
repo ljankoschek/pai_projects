@@ -299,9 +299,8 @@ class SWAGInference(object):
 
             # TODO(1): Perform inference for all samples in `loader` using current model sample,
             #  and add the predictions to model_predictions
-            for batch_images, _ in loader:
-                predictions = self.network(batch_images)
-                model_predictions.append(predictions)
+            current_predictions = self.predict_probabilities_map(loader)
+            model_predictions.append(current_predictions)
             # raise NotImplementedError("Perform inference using current model")
 
         assert len(model_predictions) == self.num_bma_samples
@@ -314,7 +313,7 @@ class SWAGInference(object):
 
         # TODO(1): Average predictions from different model samples into bma_probabilities
         # raise NotImplementedError("Aggregate predictions from model samples")
-        bma_probabilities = 0
+        bma_probabilities = torch.stack(model_predictions, dim=2).mean(dim=2)
 
         assert bma_probabilities.dim() == 2 and bma_probabilities.size(1) == 6  # N x C
         return bma_probabilities
@@ -339,6 +338,7 @@ class SWAGInference(object):
             # Diagonal part
             sampled_weight = mean_weights + std_weights * z_diag
 
+
             # Full SWAG part
             if self.inference_mode == InferenceType.SWAG_FULL:
                 # TODO(2): Sample parameter values for full SWAG
@@ -347,6 +347,9 @@ class SWAGInference(object):
 
             # Modify weight value in-place; directly changing self.network
             param.data = sampled_weight
+
+            self._update_batchnorm_statistics()
+
 
         # TODO(1): Don't forget to update batch normalization statistics using self._update_batchnorm_statistics()
         #  in the appropriate place!
