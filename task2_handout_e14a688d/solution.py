@@ -31,13 +31,13 @@ Note that MAP inference can take a long time.
 
 
 def main():
-    raise RuntimeError(
-        "This main() method is for illustrative purposes only"
-        " and will NEVER be called when running your solution to generate your submission file!\n"
-        "The checker always directly interacts with your SWAGInference class and evaluate method.\n"
-        "You can remove this exception for local testing, but be aware that any changes to the main() method"
-        " are ignored when generating your submission file."
-    )
+    # raise RuntimeError(
+    #     "This main() method is for illustrative purposes only"
+    #     " and will NEVER be called when running your solution to generate your submission file!\n"
+    #     "The checker always directly interacts with your SWAGInference class and evaluate method.\n"
+    #     "You can remove this exception for local testing, but be aware that any changes to the main() method"
+    #     " are ignored when generating your submission file."
+    # )
 
     data_location = pathlib.Path.cwd()
     model_location = pathlib.Path.cwd()
@@ -111,9 +111,11 @@ class SWAGInference(object):
         self,
         train_xs: torch.Tensor,
         model_dir: pathlib.Path,
+
         # TODO(1): change inference_mode to InferenceMode.SWAG_DIAGONAL
         # TODO(2): change inference_mode to InferenceMode.SWAG_FULL
-        inference_mode: InferenceType = InferenceType.MAP,
+        # inference_mode: InferenceType = InferenceType.MAP,
+        inference_mode: InferenceType = InferenceType.SWAG_DIAGONAL,
         # TODO(2): optionally add/tweak hyperparameters
         swag_training_epochs: int = 30,
         swag_lr: float = 0.045,
@@ -153,6 +155,9 @@ class SWAGInference(object):
         #  as a dictionary that maps from weight name to values.
         #  Hint: you never need to consider the full vector of weights,
         #  but can always act on per-layer weights (in the format that _create_weight_copy() returns)
+        self.num_epochs = 0
+        self.theta_swa = self._create_weight_copy()
+        self.theta_sm = self._create_weight_copy()
 
         # Full SWAG
         # TODO(2): create attributes for SWAG-full
@@ -172,8 +177,10 @@ class SWAGInference(object):
 
         # SWAG-diagonal
         for name, param in copied_params.items():
+            self.theta_swa[name] += (param - self.theta_swa[name]) / self.num_epochs
+            self.theta_sm[name] += (param**2 - self.theta_sm[name]) / self.num_epochs
             # TODO(1): update SWAG-diagonal attributes for weight `name` using `copied_params` and `param`
-            raise NotImplementedError("Update SWAG-diagonal statistics")
+            # raise NotImplementedError("Update SWAG-diagonal statistics")
 
         # Full SWAG
         if self.inference_mode == InferenceType.SWAG_FULL:
@@ -209,7 +216,7 @@ class SWAGInference(object):
         )
 
         # TODO(1): Perform initialization for SWAG fitting
-        raise NotImplementedError("Initialize SWAG fitting")
+        # raise NotImplementedError("Initialize SWAG fitting")
 
         self.network.train()
         with tqdm.trange(self.swag_training_epochs, desc="Running gradient descent for SWA") as pbar:
@@ -240,8 +247,11 @@ class SWAGInference(object):
                     progress_dict["avg. epoch accuracy"] = avg_accuracy
                     pbar.set_postfix(progress_dict)
 
+                if (epoch+1) % self.swag_update_interval == 0:
+                    self.num_epochs = epoch + 1
+                    self.update_swag_statistics()
                 # TODO(1): Implement periodic SWAG updates using the attributes defined in __init__
-                raise NotImplementedError("Periodically update SWAG statistics")
+                # raise NotImplementedError("Periodically update SWAG statistics")
 
     def apply_calibration(self, validation_data: torch.utils.data.Dataset) -> None:
         """
@@ -283,12 +293,16 @@ class SWAGInference(object):
         # and perform inference with each network on all samples in loader.
         model_predictions = []
         for _ in tqdm.trange(self.num_bma_samples, desc="Performing Bayesian model averaging"):
+            self.sample_parameters()
             # TODO(1): Sample new parameters for self.network from the SWAG approximate posterior
-            raise NotImplementedError("Sample network parameters")
+            # raise NotImplementedError("Sample network parameters")
 
             # TODO(1): Perform inference for all samples in `loader` using current model sample,
             #  and add the predictions to model_predictions
-            raise NotImplementedError("Perform inference using current model")
+            for batch_images, _ in loader:
+                predictions = self.network(batch_images)
+                model_predictions.append(predictions)
+            # raise NotImplementedError("Perform inference using current model")
 
         assert len(model_predictions) == self.num_bma_samples
         assert all(
@@ -299,8 +313,8 @@ class SWAGInference(object):
         )
 
         # TODO(1): Average predictions from different model samples into bma_probabilities
-        raise NotImplementedError("Aggregate predictions from model samples")
-        bma_probabilities = ...
+        # raise NotImplementedError("Aggregate predictions from model samples")
+        bma_probabilities = 0
 
         assert bma_probabilities.dim() == 2 and bma_probabilities.size(1) == 6  # N x C
         return bma_probabilities
@@ -317,9 +331,9 @@ class SWAGInference(object):
             # SWAG-diagonal part
             z_diag = torch.randn(param.size())
             # TODO(1): Sample parameter values for SWAG-diagonal
-            raise NotImplementedError("Sample parameter for SWAG-diagonal")
-            mean_weights = ...
-            std_weights = ...
+            # raise NotImplementedError("Sample parameter for SWAG-diagonal")
+            mean_weights = self.theta_swa[name]
+            std_weights = torch.sqrt(self.theta_sm[name] - self.theta_swa[name]**2) / np.sqrt(2)
             assert mean_weights.size() == param.size() and std_weights.size() == param.size()
 
             # Diagonal part
