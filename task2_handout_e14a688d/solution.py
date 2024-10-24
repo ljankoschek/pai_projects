@@ -12,7 +12,7 @@ import torch.optim
 import torch.utils.data
 import tqdm
 from matplotlib import pyplot as plt
-from temperature_scaling import ModelWithTemperature
+#from temperature_scaling import ModelWithTemperature
 
 from util import draw_reliability_diagram, cost_function, setup_seeds, calc_calibration_curve
 
@@ -303,6 +303,7 @@ class SWAGInference(object):
             optimizer,
             epochs=self.swag_training_epochs,
             steps_per_epoch=len(loader),
+            lr=self.swag_lr
         )
 
         # TODO(1): Perform initialization for SWAG fitting
@@ -362,7 +363,7 @@ class SWAGInference(object):
 
         # TODO(1): pick a prediction threshold, either constant or adaptive.
         #  The provided value should suffice to pass the easy baseline.
-        # self._calibration_threshold = 2.0 / 3.0
+        self._calibration_threshold = 0.7 #2.0 / 3.0
 
         # TODO(2): perform additional calibration if desired.
         #  Feel free to remove or change the prediction threshold.
@@ -430,7 +431,7 @@ class SWAGInference(object):
             # TODO(1): Sample parameter values for SWAG-diagonal
             # raise NotImplementedError("Sample parameter for SWAG-diagonal")
             mean_weights = self.theta_swa[name]
-            std_weights = (self.theta_sm[name] - self.theta_swa[name]**2)**0.5 * 1/(2**0.5)
+            std_weights = torch.sqrt(self.theta_sm[name] - mean_weights**2)
             assert mean_weights.size() == param.size() and std_weights.size() == param.size()
 
             # Diagonal part
@@ -695,7 +696,9 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         This method should return a single float: the new learning rate.
         """
         # TODO(2): Implement a custom schedule if desired
-        return previous_lr
+        new_lr = previous_lr * 0.9 + self.lr * 0.1  # Weigh more heavily on previous_lr
+
+        return new_lr
 
     # TODO(2): Add and store additional arguments if you decide to implement a custom scheduler
     def __init__(
@@ -703,9 +706,11 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         optimizer: torch.optim.Optimizer,
         epochs: int,
         steps_per_epoch: int,
+        lr: float,
     ):
         self.epochs = epochs
         self.steps_per_epoch = steps_per_epoch
+        self.lr = lr
         super().__init__(optimizer, last_epoch=-1, verbose=False)
 
     def get_lr(self):
