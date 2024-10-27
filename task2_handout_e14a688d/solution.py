@@ -16,7 +16,7 @@ from matplotlib import pyplot as plt
 
 from util import draw_reliability_diagram, cost_function, setup_seeds, calc_calibration_curve
 
-EXTENDED_EVALUATION = True
+EXTENDED_EVALUATION = False
 """
 Set `EXTENDED_EVALUATION` to `True` in order to generate additional plots on validation data.
 """
@@ -303,7 +303,8 @@ class SWAGInference(object):
             optimizer,
             epochs=self.swag_training_epochs,
             steps_per_epoch=len(loader),
-            lr=self.swag_lr
+            lr=self.swag_lr,
+            max_lr=self.swag_lr*2.0
         )
 
         # TODO(1): Perform initialization for SWAG fitting
@@ -696,8 +697,14 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         This method should return a single float: the new learning rate.
         """
         # TODO(2): Implement a custom schedule if desired
-        new_lr = previous_lr * 0.9 + self.lr * 0.1  # Weigh more heavily on previous_lr
+        #new_lr = previous_lr * 0.9 + self.lr * 0.1  # Weigh more heavily on previous_lr
 
+        progress = current_epoch - np.fix(current_epoch)
+
+        if progress < 0.5:
+            new_lr = self.lr + (self.max_lr - self.lr) * (2*progress)
+        else:
+            new_lr = self.max_lr - (self.max_lr - self.lr) * (2*(progress-0.5))
         return new_lr
 
     # TODO(2): Add and store additional arguments if you decide to implement a custom scheduler
@@ -707,10 +714,12 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         epochs: int,
         steps_per_epoch: int,
         lr: float,
+        max_lr: float,
     ):
         self.epochs = epochs
         self.steps_per_epoch = steps_per_epoch
         self.lr = lr
+        self.max_lr = max_lr
         super().__init__(optimizer, last_epoch=-1, verbose=False)
 
     def get_lr(self):
