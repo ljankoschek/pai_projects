@@ -304,7 +304,7 @@ class SWAGInference(object):
             epochs=self.swag_training_epochs,
             steps_per_epoch=len(loader),
             lr=self.swag_lr,
-            max_lr=self.swag_lr*2.0
+            max_lr=self.swag_lr*3.0
         )
 
         # TODO(1): Perform initialization for SWAG fitting
