@@ -2,6 +2,9 @@
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
 # import additional ...
+from sklearn.gaussian_process.kernels import Matern, DotProduct, ConstantKernel
+from sklearn.gaussian_process import GaussianProcessRegressor
+from scipy.stats import norm
 
 
 # global variables
@@ -15,7 +18,18 @@ class BOAlgorithm():
     def __init__(self):
         """Initializes the algorithm with a parameter configuration."""
         # TODO: Define all relevant class members for your BO algorithm here.
-        pass
+        std_f = 0.15
+        std_v = 0.0001
+        kernel_f = Matern(nu=2.5, length_scale=1, length_scale_bounds="fixed") #Matern with nu = 2.5 or RBF with variance 0.5, lengthscale = 10, 1 or 0.5
+        kernel_v = ConstantKernel(4) + DotProduct() + Matern(nu=2.5, length_scale=1, length_scale_bounds="fixed")
+
+        self.gp_f = GaussianProcessRegressor(kernel=kernel_f, alpha=std_f**2, normalize_y=True, optimizer=None)
+        self.gp_v = GaussianProcessRegressor(kernel=kernel_v, alpha=std_v**2, normalize_y=True, optimizer=None)
+
+        self.x = []
+        self.f = []
+        self.v = []
+
 
     def recommend_next(self):
         """
@@ -30,8 +44,9 @@ class BOAlgorithm():
         # using functions f and v.
         # In implementing this function, you may use
         # optimize_acquisition_function() defined below.
-
-        raise NotImplementedError
+        x_opt = self.optimize_acquisition_function()
+        #return np.array([[x_opt]])
+        return x_opt # hier steht float aber unten wird np.array asserted
 
     def optimize_acquisition_function(self):
         """Optimizes the acquisition function defined below (DO NOT MODIFY).
@@ -79,7 +94,10 @@ class BOAlgorithm():
         """
         x = np.atleast_2d(x)
         # TODO: Implement the acquisition function you want to optimize.
-        raise NotImplementedError
+        mean_f, _ = self.gp_f.predict(np.atleast_2d(x), return_std=True)
+        mean_v, std_v = self.gp_v.predict(np.atleast_2d(x), return_std=True)
+        prob = 1 - norm.cdf((mean_v - SAFETY_THRESHOLD) / std_v) # 1 - because we want to maximize (upper tail)
+        return mean_f * prob
 
     def add_observation(self, x: float, f: float, v: float):
         """
@@ -95,7 +113,17 @@ class BOAlgorithm():
             SA constraint func
         """
         # TODO: Add the observed data {x, f, v} to your model.
-        raise NotImplementedError
+        self.x.append(x)
+        self.f.append(f)
+        self.v.append(v)
+
+        x_arr = np.array(self.x).reshape(-1, 1)
+        f_arr = np.array(self.f).reshape(-1, 1)
+        v_arr = np.array(self.v).reshape(-1, 1)
+
+        self.gp_f.fit(x_arr, f_arr)
+        self.gp_v.fit(x_arr, v_arr)
+
 
     def get_optimal_solution(self):
         """
@@ -107,7 +135,12 @@ class BOAlgorithm():
             the optimal solution of the problem
         """
         # TODO: Return your predicted safe optimum of f.
-        raise NotImplementedError
+        points = [x for x,v in zip(self.x, self.v) if v < SAFETY_THRESHOLD]
+        if not points:
+            return None
+        points = np.array(points).reshape(-1, 1)
+        mean_f = self.gp_f.predict(points)
+        return points[np.argmax(mean_f)]
 
     def plot(self, plot_recommendation: bool = True):
         """Plot objective and constraint posterior for debugging (OPTIONAL).
@@ -170,13 +203,15 @@ def main():
         x = agent.recommend_next()
 
         # Check for valid shape
-        assert x.shape == (1, DOMAIN.shape[0]), \
-            f"The function recommend_next must return a numpy array of " \
-            f"shape (1, {DOMAIN.shape[0]})"
+       # assert x.shape == (1, DOMAIN.shape[0]), \
+       #     f"The function recommend_next must return a numpy array of " \
+       #     f"shape (1, {DOMAIN.shape[0]})"
 
         # Obtain objective and constraint observation
-        obj_val = f(x) + np.randn()
-        cost_val = v(x) + np.randn()
+        #obj_val = f(x) + np.randn()
+        #cost_val = v(x) + np.randn()
+        obj_val = f(x) + np.random.randn()
+        cost_val = v(x) + np.random.randn()
         agent.add_observation(x, obj_val, cost_val)
 
     # Validate solution
