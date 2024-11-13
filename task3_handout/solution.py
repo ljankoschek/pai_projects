@@ -44,9 +44,9 @@ class BOAlgorithm():
         # using functions f and v.
         # In implementing this function, you may use
         # optimize_acquisition_function() defined below.
-        x_opt = self.optimize_acquisition_function()
-        #return np.array([[x_opt]])
-        return x_opt # hier steht float aber unten wird np.array asserted
+        x_next = self.optimize_acquisition_function()
+        #return np.array([[x_next]]) #np.array version
+        return x_next # hier steht float aber unten wird np.array asserted
 
     def optimize_acquisition_function(self):
         """Optimizes the acquisition function defined below (DO NOT MODIFY).
@@ -94,9 +94,9 @@ class BOAlgorithm():
         """
         x = np.atleast_2d(x)
         # TODO: Implement the acquisition function you want to optimize.
-        mean_f, _ = self.gp_f.predict(np.atleast_2d(x), return_std=True)
-        mean_v, std_v = self.gp_v.predict(np.atleast_2d(x), return_std=True)
-        prob = 1 - norm.cdf((mean_v - SAFETY_THRESHOLD) / std_v) # 1 - because we want to maximize (upper tail)
+        mean_f, _ = self.gp_f.predict(x, return_std=True)
+        mean_v, std_v = self.gp_v.predict(x, return_std=True)
+        prob = 1 - norm.cdf((mean_v - SAFETY_THRESHOLD) / std_v)
         return mean_f * prob
 
     def add_observation(self, x: float, f: float, v: float):
@@ -135,12 +135,16 @@ class BOAlgorithm():
             the optimal solution of the problem
         """
         # TODO: Return your predicted safe optimum of f.
-        points = [x for x,v in zip(self.x, self.v) if v < SAFETY_THRESHOLD]
-        if not points:
+        x_arr = np.array(self.x).reshape(-1, 1)
+        v_arr = np.array(self.v).reshape(-1, 1)
+        valid_x = x_arr[v_arr < SAFETY_THRESHOLD]
+        
+        if valid_x.size == 0:
             return None
-        points = np.array(points).reshape(-1, 1)
-        mean_f = self.gp_f.predict(points)
-        return points[np.argmax(mean_f)]
+        
+        means_f = self.gp_f.predict(valid_x.reshape(-1, 1))
+        x_opt = valid_x[np.argmax(means_f)]
+        return x_opt
 
     def plot(self, plot_recommendation: bool = True):
         """Plot objective and constraint posterior for debugging (OPTIONAL).
