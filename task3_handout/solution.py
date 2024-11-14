@@ -96,8 +96,14 @@ class BOAlgorithm():
         # TODO: Implement the acquisition function you want to optimize.
         mean_f, _ = self.gp_f.predict(x, return_std=True)
         mean_v, std_v = self.gp_v.predict(x, return_std=True)
-        prob = 1 - norm.cdf((mean_v - SAFETY_THRESHOLD) / std_v)
-        return mean_f * prob
+        #prob = 1 - norm.cdf((mean_v - SAFETY_THRESHOLD) / std_v)
+        # mean_f * prob
+        xi = 1
+        tmp = mean_v - SAFETY_THRESHOLD - xi
+
+        ei = tmp * norm.cdf(tmp / std_v) + std_v * norm.pdf(tmp / std_v)
+        return mean_f * ei
+
 
     def add_observation(self, x: float, f: float, v: float):
         """
