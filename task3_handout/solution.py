@@ -94,15 +94,23 @@ class BOAlgorithm():
         """
         x = np.atleast_2d(x)
         # TODO: Implement the acquisition function you want to optimize.
-        mean_f, _ = self.gp_f.predict(x, return_std=True)
+        mean_f, std_f = self.gp_f.predict(x, return_std=True)
         mean_v, std_v = self.gp_v.predict(x, return_std=True)
-        #prob = 1 - norm.cdf((mean_v - SAFETY_THRESHOLD) / std_v)
-        # mean_f * prob
-        xi = 1
-        tmp = mean_v - SAFETY_THRESHOLD - xi
 
-        ei = tmp * norm.cdf(tmp / std_v) + std_v * norm.pdf(tmp / std_v)
-        return mean_f * ei
+        # from https://ekamperi.github.io/machine%20learning/2021/06/11/acquisition-functions.html
+        # Try Probability of Improvement
+        prob = 1 - norm.cdf((mean_v - SAFETY_THRESHOLD) / std_v)
+        mean_f = mean_f * prob 
+
+        # use UCB for for v
+        beta_v = 5
+        ucb_v = mean_v + beta_v * std_v
+        
+        # use lagrangian relaxation with ucb_v
+        #if ucb_v is bigger than threshold, use this as penalty otherwise 0 (= no penalty) 
+        # https://arxiv.org/pdf/1906.09459
+        l = 2  
+        return mean_f - l * max(ucb_v - SAFETY_THRESHOLD, 0)
 
 
     def add_observation(self, x: float, f: float, v: float):
@@ -148,8 +156,8 @@ class BOAlgorithm():
         if valid_x.size == 0:
             return None
         
-        means_f = self.gp_f.predict(valid_x.reshape(-1, 1))
-        x_opt = valid_x[np.argmax(means_f)]
+        means_f = self.gp_f.predict(x_arr.reshape(-1, 1))
+        x_opt = x_arr[np.argmax(means_f)]
         return x_opt
 
     def plot(self, plot_recommendation: bool = True):
