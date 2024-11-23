@@ -6,6 +6,7 @@ from sklearn.gaussian_process.kernels import Matern, DotProduct, ConstantKernel
 from sklearn.gaussian_process import GaussianProcessRegressor
 from scipy.stats import norm
 
+np.randn = np.random.randn
 
 # global variables
 DOMAIN = np.array([[0, 10]])  # restrict \theta in [0, 10]
@@ -45,8 +46,8 @@ class BOAlgorithm():
         # In implementing this function, you may use
         # optimize_acquisition_function() defined below.
         x_next = self.optimize_acquisition_function()
-        #return np.array([[x_next]]) #np.array version
-        return x_next # hier steht float aber unten wird np.array asserted
+        return np.array([[x_next]]) # np.ndarray version
+        # return x_next # hier steht float aber unten wird np.array asserted
 
     def optimize_acquisition_function(self):
         """Optimizes the acquisition function defined below (DO NOT MODIFY).
@@ -126,7 +127,9 @@ class BOAlgorithm():
         v: float
             SA constraint func
         """
-        # TODO: Add the observed data {x, f, v} to your model.
+        # TODO: Add the observed data {x, f, v} to your model.#
+        if isinstance(x, np.ndarray):
+            x = x.flatten().item()
         self.x.append(x)
         self.f.append(f)
         self.v.append(v)
@@ -221,15 +224,13 @@ def main():
         x = agent.recommend_next()
 
         # Check for valid shape
-       # assert x.shape == (1, DOMAIN.shape[0]), \
-       #     f"The function recommend_next must return a numpy array of " \
-       #     f"shape (1, {DOMAIN.shape[0]})"
+        assert x.shape == (1, DOMAIN.shape[0]), \
+            f"The function recommend_next must return a numpy array of " \
+            f"shape (1, {DOMAIN.shape[0]})"
 
         # Obtain objective and constraint observation
-        #obj_val = f(x) + np.randn()
-        #cost_val = v(x) + np.randn()
-        obj_val = f(x) + np.random.randn()
-        cost_val = v(x) + np.random.randn()
+        obj_val = f(x) + np.randn()
+        cost_val = v(x) + np.randn()
         agent.add_observation(x, obj_val, cost_val)
 
     # Validate solution
