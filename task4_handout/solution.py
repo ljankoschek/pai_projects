@@ -33,8 +33,10 @@ class Critic(nn.Module):
         super().__init__()
         #####################################################################
         # TODO: add components as needed (if needed)
-
+        self.lr = 1
         self.net = MLP([obs_size + action_size] + ([num_units] * num_layers) + [1])
+        self.optimizer = optim.AdamW(self.network.parameters(), lr=self.lr)
+        self.loss = nn.MSELoss()
 
         #####################################################################
 
@@ -45,10 +47,10 @@ class Critic(nn.Module):
         # of shape (batch_size x obs_size) and batch_size x action_size) respectively
         # and output a batch of values of shape (batch_size x 1)
         
-        value = torch.zeros(x.shape[0], 1, device=x.device)
+        # value = torch.zeros(x.shape[0], 1, device=x.device)
 
         #####################################################################
-        return value
+        return self.net(x, a)
 
 
 class Actor(nn.Module):
@@ -59,8 +61,9 @@ class Actor(nn.Module):
         super().__init__()
         #####################################################################
         # TODO: add components as needed (if needed)
-
+        self.lr = 1
         self.net = MLP([obs_size] + ([num_units] * num_layers) + [action_size])
+        self.optimizer = optim.AdamW(self.network.parameters(), lr=self.lr)
 
         #####################################################################
         # store action scale and bias: the actor's output can be squashed to [-1, 1]
@@ -73,10 +76,10 @@ class Actor(nn.Module):
         # the actor will receive a batch of observations of shape (batch_size x obs_size)
         # and output a batch of actions of shape (batch_size x action_size)
 
-        action = torch.zeros(x.shape[0], self.action_scale.shape[-1], device=x.device)
+        # action = torch.zeros(x.shape[0], self.action_scale.shape[-1], device=x.device)
 
         #####################################################################
-        return action
+        return self.net(x)
 
 
 class Agent:
@@ -95,6 +98,7 @@ class Agent:
     #########################################################################
 
     def __init__(self, env):
+        print(env)
 
         # extract informations from the environment
         self.obs_size = np.prod(env.observation_space.shape)  # size of observations
@@ -105,6 +109,27 @@ class Agent:
 
         #####################################################################
         # TODO: initialize actor, critic and attributes
+        self.actor = Actor(
+            action_low=self.action_low,
+            action_high=self.action_high,
+            obs_size=self.obs_size,
+            action_size=self.action_size,
+            num_layers=10,
+            num_units=64
+        )
+        self.critic1 = Critic(
+            obs_size=self.obs_size,
+            action_size=self.action_size,
+            num_layers=10,
+            num_units=64
+        )
+
+        self.critic2 = Critic(
+            obs_size=self.obs_size,
+            action_size=self.action_size,
+            num_layers=10,
+            num_units=64
+        )
 
         #####################################################################
         # create buffer
@@ -117,8 +142,18 @@ class Agent:
         '''
         obs, action, next_obs, done, reward = self.buffer.sample(self.batch_size)
 
+
         #####################################################################
-        # TODO: code training logic
+        a_tilde = self.actor(next_obs)
+        pred1 = self.critic1(next_obs, a_tilde)
+        pred2 = self.critic2(next_obs, a_tilde)
+        y = reward + self.gamma * torch.min(pred1, pred2)
+        loss1 = self.critic1.loss(pred1, y)
+        loss2 = self.critic2.loss(pred2, y)
+        self.critic1.optimizer.zero_grad()
+        self.critic2.optimizer.zero_grad()
+        loss1.backward()
+        loss2.backward()
 
         #####################################################################
 
