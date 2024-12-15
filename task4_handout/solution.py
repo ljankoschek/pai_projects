@@ -8,6 +8,12 @@ from gymnasium.utils import seeding
 from utils import ReplayBuffer, get_env, run_episode
 
 
+def interpolate_params(target_net, net, tau):
+    with torch.no_grad():  # Disable gradient tracking
+        for target_param, param in zip(target_net.parameters(), net.parameters()):
+            target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
+
 class MLP(nn.Module):
     '''
     A simple ReLU MLP constructed from a list of layer widths.
@@ -35,7 +41,7 @@ class Critic(nn.Module):
         # TODO: add components as needed (if needed)
         self.lr = 1
         self.net = MLP([obs_size + action_size] + ([num_units] * num_layers) + [1])
-        self.optimizer = optim.AdamW(self.network.parameters(), lr=self.lr)
+        self.optimizer = optim.AdamW(self.net.parameters(), lr=self.lr)
         self.loss = nn.MSELoss()
 
         #####################################################################
@@ -63,7 +69,7 @@ class Actor(nn.Module):
         # TODO: add components as needed (if needed)
         self.lr = 1
         self.net = MLP([obs_size] + ([num_units] * num_layers) + [action_size])
-        self.optimizer = optim.AdamW(self.network.parameters(), lr=self.lr)
+        self.optimizer = optim.AdamW(self.net.parameters(), lr=self.lr)
 
         #####################################################################
         # store action scale and bias: the actor's output can be squashed to [-1, 1]
@@ -85,7 +91,8 @@ class Actor(nn.Module):
 class Agent:
 
     # automatically select compute device
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # device = 'cuda' if torch.cuda.is_available() else
+    device = 'cpu'
     buffer_size: int = 50_000  # no need to change
 
     #########################################################################
@@ -131,6 +138,40 @@ class Agent:
             num_units=64
         )
 
+        self.target1 = Critic(
+            obs_size=self.obs_size,
+            action_size=self.action_size,
+            num_layers=10,
+            num_units=64
+        )
+
+        self.target2 = Critic(
+            obs_size=self.obs_size,
+            action_size=self.action_size,
+            num_layers=10,
+            num_units=64
+        )
+
+        self.actor_target = Actor(
+            action_low=self.action_low,
+            action_high=self.action_high,
+            obs_size=self.obs_size,
+            action_size=self.action_size,
+            num_layers=10,
+            num_units=64
+        )
+
+        self.d = 10
+        self.t = 1
+        self.tau = 0.1
+        self.sigma = 0.5
+        self.target_sigma = 0.2
+        self.c = 0.5
+
+        self.target1.load_state_dict(self.critic1.state_dict())
+        self.target2.load_state_dict(self.critic2.state_dict())
+        self.actor_target.load_state_dict(self.actor.state_dict())
+
         #####################################################################
         # create buffer
         self.buffer = ReplayBuffer(self.buffer_size, self.obs_size, self.action_size, self.device)
@@ -144,16 +185,32 @@ class Agent:
 
 
         #####################################################################
-        a_tilde = self.actor(next_obs)
-        pred1 = self.critic1(next_obs, a_tilde)
-        pred2 = self.critic2(next_obs, a_tilde)
-        y = reward + self.gamma * torch.min(pred1, pred2)
+        a_tilde = self.actor_target(next_obs) # TODO add noise
+        target_pred1 = self.target1(next_obs, a_tilde)
+        target_pred2 = self.target2(next_obs, a_tilde)
+        y = reward + self.gamma * torch.min(target_pred1, target_pred2)
+        pred1 = self.critic1(obs, action)
+        pred2 = self.critic2(obs, action)
         loss1 = self.critic1.loss(pred1, y)
         loss2 = self.critic2.loss(pred2, y)
         self.critic1.optimizer.zero_grad()
         self.critic2.optimizer.zero_grad()
         loss1.backward()
         loss2.backward()
+
+        if self.t % self.d == 0:
+            # TODO
+            a = self.actor(obs)
+            a += torch.clamp_(self.target_sigma * torch.randn(a.shape), -self.c, self.c)
+            loss = -self.critic1(obs, a).mean()
+            self.actor.optimizer.zero_grad()
+            loss.backward()
+
+            interpolate_params(self.target1, self.critic1, self.tau)
+            interpolate_params(self.target2, self.critic2, self.tau)
+            interpolate_params(self.actor_target, self.actor, self.tau)
+
+        self.t += 1
 
         #####################################################################
 
@@ -168,10 +225,11 @@ class Agent:
         # shape (act_size, )
 
         with torch.no_grad():
-            action = np.zeros((self.action_size,))
+            action = self.actor(torch.Tensor(obs))
+            action += self.sigma * torch.randn(action.shape)
         
         #####################################################################
-        return action
+        return action.numpy()
 
     def store(self, transition):
         '''
