@@ -56,7 +56,8 @@ class Critic(nn.Module):
         # value = torch.zeros(x.shape[0], 1, device=x.device)
 
         #####################################################################
-        return self.net(x, a)
+        input = torch.cat((x, a), dim=1)
+        return self.net(input)
 
 
 class Actor(nn.Module):
@@ -185,23 +186,24 @@ class Agent:
 
 
         #####################################################################
-        a_tilde = self.actor_target(next_obs) # TODO add noise
+        a_tilde = self.actor_target(next_obs)
+        a_tilde += torch.clamp_(self.target_sigma * torch.randn(a_tilde.shape), -self.c, self.c)
+        a_tilde = torch.clamp(a_tilde, -1, 1)
         target_pred1 = self.target1(next_obs, a_tilde)
         target_pred2 = self.target2(next_obs, a_tilde)
         y = reward + self.gamma * torch.min(target_pred1, target_pred2)
         pred1 = self.critic1(obs, action)
         pred2 = self.critic2(obs, action)
         loss1 = self.critic1.loss(pred1, y)
-        loss2 = self.critic2.loss(pred2, y)
+        loss2 = self.critic2.loss(pred2, torch.clone(y).float())
         self.critic1.optimizer.zero_grad()
+        loss1.backward(retain_graph=True)
         self.critic2.optimizer.zero_grad()
-        loss1.backward()
         loss2.backward()
 
         if self.t % self.d == 0:
             # TODO
             a = self.actor(obs)
-            a += torch.clamp_(self.target_sigma * torch.randn(a.shape), -self.c, self.c)
             loss = -self.critic1(obs, a).mean()
             self.actor.optimizer.zero_grad()
             loss.backward()
