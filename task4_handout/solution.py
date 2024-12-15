@@ -1,18 +1,13 @@
+import copy
 import random
 import time
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from gymnasium.utils import seeding
 from utils import ReplayBuffer, get_env, run_episode
-
-
-def interpolate_params(target_net, net, tau):
-    with torch.no_grad():  # Disable gradient tracking
-        for target_param, param in zip(target_net.parameters(), net.parameters()):
-            target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
-
 
 class MLP(nn.Module):
     '''
@@ -39,11 +34,8 @@ class Critic(nn.Module):
         super().__init__()
         #####################################################################
         # TODO: add components as needed (if needed)
-        self.lr = 1
-        self.net = MLP([obs_size + action_size] + ([num_units] * num_layers) + [1])
-        self.optimizer = optim.AdamW(self.net.parameters(), lr=self.lr)
-        self.loss = nn.MSELoss()
-
+        self.Q1_net = MLP([obs_size + action_size] + ([num_units] * num_layers) + [1])
+        self.Q2_net = MLP([obs_size + action_size] + ([num_units] * num_layers) + [1])
         #####################################################################
 
     def forward(self, x, a):
@@ -57,7 +49,17 @@ class Critic(nn.Module):
 
         #####################################################################
         input = torch.cat((x, a), dim=1)
-        return self.net(input)
+        q1 = self.Q1_net(input)
+        q2 = self.Q2_net(input)
+        return q1, q2
+
+
+    def Q1(self, x, a):
+        input = torch.cat((x, a), dim=1)
+        q1 = self.Q1_net(input)
+        return q1
+
+
 
 
 class Actor(nn.Module):
@@ -71,8 +73,8 @@ class Actor(nn.Module):
         self.lr = 1
         self.net = MLP([obs_size] + ([num_units] * num_layers) + [action_size])
         self.optimizer = optim.AdamW(self.net.parameters(), lr=self.lr)
-        self.action_high = action_high
-        self.action_low = action_low
+        self.action_high = action_high.to(Agent.device)
+        self.action_low = action_low.to(Agent.device)
         #####################################################################
         # store action scale and bias: the actor's output can be squashed to [-1, 1]
         self.action_scale = (action_high - action_low) / 2
@@ -93,8 +95,8 @@ class Actor(nn.Module):
 class Agent:
 
     # automatically select compute device
-    # device = 'cuda' if torch.cuda.is_available() else
-    device = 'cpu'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # device = 'cpu'
     buffer_size: int = 50_000  # no need to change
 
     #########################################################################
@@ -103,18 +105,24 @@ class Agent:
     batch_size: int = 256
     gamma: float = 0.99  # MDP discount factor, 
     exploration_noise: float = 0.1  # epsilon for epsilon-greedy exploration
+    c = 0.1
+    d = 2
+    tau = 0.005
     
     #########################################################################
 
-    def __init__(self, env):
+    def __init__(
+            self,
+            env,
+    ):
         print(env)
 
         # extract informations from the environment
         self.obs_size = np.prod(env.observation_space.shape)  # size of observations
         self.action_size = np.prod(env.action_space.shape)  # size of actions
         # extract bounds of the action space
-        self.action_low = torch.tensor(env.action_space.low).float()
-        self.action_high = torch.tensor(env.action_space.high).float()
+        self.action_low = torch.tensor(env.action_space.low).float().to(Agent.device)
+        self.action_high = torch.tensor(env.action_space.high).float().to(Agent.device)
 
         #####################################################################
         # TODO: initialize actor, critic and attributes
@@ -123,56 +131,23 @@ class Agent:
             action_high=self.action_high,
             obs_size=self.obs_size,
             action_size=self.action_size,
-            num_layers=10,
-            num_units=64
-        )
-        self.critic1 = Critic(
+            num_layers=3,
+            num_units=128
+        ).to(device=Agent.device)
+        self.actor_target = copy.deepcopy(self.actor)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=0.001)
+
+        self.critic = Critic(
             obs_size=self.obs_size,
             action_size=self.action_size,
-            num_layers=10,
-            num_units=64
-        )
-
-        self.critic2 = Critic(
-            obs_size=self.obs_size,
-            action_size=self.action_size,
-            num_layers=10,
-            num_units=64
-        )
-
-        self.target1 = Critic(
-            obs_size=self.obs_size,
-            action_size=self.action_size,
-            num_layers=10,
-            num_units=64
-        )
-
-        self.target2 = Critic(
-            obs_size=self.obs_size,
-            action_size=self.action_size,
-            num_layers=10,
-            num_units=64
-        )
-
-        self.actor_target = Actor(
-            action_low=self.action_low,
-            action_high=self.action_high,
-            obs_size=self.obs_size,
-            action_size=self.action_size,
-            num_layers=10,
-            num_units=64
-        )
-
-        self.d = 10
+            num_layers=3,
+            num_units=128
+        ).to(device=Agent.device)
+        self.critic_target = copy.deepcopy(self.critic)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=0.001)
         self.t = 1
-        self.tau = 0.1
-        self.sigma = 0.5
-        self.target_sigma = 0.2
-        self.c = 0.5
 
-        self.target1.load_state_dict(self.critic1.state_dict())
-        self.target2.load_state_dict(self.critic2.state_dict())
-        self.actor_target.load_state_dict(self.actor.state_dict())
+
 
         #####################################################################
         # create buffer
@@ -188,33 +163,32 @@ class Agent:
 
         #####################################################################
         with torch.no_grad():
-            a_tilde = self.actor_target(next_obs)
-            a_tilde += torch.clamp(self.target_sigma * torch.randn(a_tilde.shape), -self.c, self.c)
-            a_tilde = torch.clamp(a_tilde, -1, 1)
-            target_pred1 = self.target1(next_obs, a_tilde)
-            target_pred2 = self.target2(next_obs, a_tilde)
-            done = done.unsqueeze(dim=-1)  # Ensure done has the correct shape
-            y = reward.unsqueeze(dim=-1) + (1 - done) * self.gamma * torch.minimum(target_pred1, target_pred2)
-        pred1 = self.critic1(obs, action)
-        pred2 = self.critic2(obs, action)
-        loss1 = self.critic1.loss(pred1, y.detach())
-        loss2 = self.critic2.loss(pred2, y.detach())
-        self.critic1.optimizer.zero_grad()
-        loss1.backward(retain_graph=True)
-        self.critic2.optimizer.zero_grad()
-        loss2.backward()
+            epsilon = (torch.randn_like(action) * self.exploration_noise).clamp(-self.c, self.c)
+            a_tilde = (self.actor_target(next_obs) + epsilon).clamp(self.action_low, self.action_high)
+
+            target_Q1, target_Q2 = self.critic_target(next_obs, a_tilde)
+            target_Q = torch.minimum(target_Q1, target_Q2)
+            target_Q = reward.unsqueeze(dim=-1) + (1 - done).unsqueeze(dim=-1) * self.gamma * target_Q
+
+        Q1, Q2 = self.critic(obs, action)
+        critic_loss = F.mse_loss(Q1, target_Q) + F.mse_loss(Q2, target_Q)
+
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
 
         if self.t % self.d == 0:
+            actor_loss = -self.critic.Q1(obs, self.actor(obs)).mean()
 
-            # TODO
-            a = self.actor(obs)
-            loss = -self.critic1(obs, a).mean()
-            self.actor.optimizer.zero_grad()
-            loss.backward()
+            self.actor_optimizer.zero_grad()
+            actor_loss.backward()
+            self.actor_optimizer.step()
 
-            interpolate_params(self.target1, self.critic1, self.tau)
-            interpolate_params(self.target2, self.critic2, self.tau)
-            interpolate_params(self.actor_target, self.actor, self.tau)
+            for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters()):
+                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+            for target_param, param in zip(self.actor_target.parameters(), self.actor.parameters()):
+                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
         self.t += 1
 
@@ -230,11 +204,10 @@ class Agent:
         # of shape (obs_size, )). The action should be a np.array of
         # shape (act_size, )
 
-        action = self.actor(torch.Tensor(obs))
-        action += self.sigma * torch.randn(action.shape)
-        action = torch.clamp(action,-1,1)
+        action = self.actor(torch.Tensor(obs).to(device=Agent.device)).cpu().numpy()
+
         #####################################################################
-        return action.numpy()
+        return action
 
     def store(self, transition):
         '''
