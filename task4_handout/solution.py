@@ -71,7 +71,8 @@ class Actor(nn.Module):
         self.lr = 1
         self.net = MLP([obs_size] + ([num_units] * num_layers) + [action_size])
         self.optimizer = optim.AdamW(self.net.parameters(), lr=self.lr)
-
+        self.action_high = action_high
+        self.action_low = action_low
         #####################################################################
         # store action scale and bias: the actor's output can be squashed to [-1, 1]
         self.action_scale = (action_high - action_low) / 2
@@ -86,7 +87,7 @@ class Actor(nn.Module):
         # action = torch.zeros(x.shape[0], self.action_scale.shape[-1], device=x.device)
 
         #####################################################################
-        return self.net(x)
+        return self.action_high * torch.tanh(self.net(x))
 
 
 class Agent:
@@ -186,22 +187,25 @@ class Agent:
 
 
         #####################################################################
-        a_tilde = self.actor_target(next_obs)
-        a_tilde += torch.clamp_(self.target_sigma * torch.randn(a_tilde.shape), -self.c, self.c)
-        a_tilde = torch.clamp(a_tilde, -1, 1)
-        target_pred1 = self.target1(next_obs, a_tilde)
-        target_pred2 = self.target2(next_obs, a_tilde)
-        y = reward + self.gamma * torch.min(target_pred1, target_pred2)
+        with torch.no_grad():
+            a_tilde = self.actor_target(next_obs)
+            a_tilde += torch.clamp(self.target_sigma * torch.randn(a_tilde.shape), -self.c, self.c)
+            a_tilde = torch.clamp(a_tilde, -1, 1)
+            target_pred1 = self.target1(next_obs, a_tilde)
+            target_pred2 = self.target2(next_obs, a_tilde)
+            done = done.unsqueeze(dim=-1)  # Ensure done has the correct shape
+            y = reward.unsqueeze(dim=-1) + (1 - done) * self.gamma * torch.minimum(target_pred1, target_pred2)
         pred1 = self.critic1(obs, action)
         pred2 = self.critic2(obs, action)
-        loss1 = self.critic1.loss(pred1, y)
-        loss2 = self.critic2.loss(pred2, torch.clone(y).float())
+        loss1 = self.critic1.loss(pred1, y.detach())
+        loss2 = self.critic2.loss(pred2, y.detach())
         self.critic1.optimizer.zero_grad()
         loss1.backward(retain_graph=True)
         self.critic2.optimizer.zero_grad()
         loss2.backward()
 
         if self.t % self.d == 0:
+
             # TODO
             a = self.actor(obs)
             loss = -self.critic1(obs, a).mean()
@@ -226,10 +230,9 @@ class Agent:
         # of shape (obs_size, )). The action should be a np.array of
         # shape (act_size, )
 
-        with torch.no_grad():
-            action = self.actor(torch.Tensor(obs))
-            action += self.sigma * torch.randn(action.shape)
-        
+        action = self.actor(torch.Tensor(obs))
+        action += self.sigma * torch.randn(action.shape)
+        action = torch.clamp(action,-1,1)
         #####################################################################
         return action.numpy()
 
