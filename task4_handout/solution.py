@@ -9,6 +9,11 @@ import torch.nn.functional as F
 from gymnasium.utils import seeding
 from utils import ReplayBuffer, get_env, run_episode
 
+
+def interpolate_nets(net, target_net, tau):
+    for target_param, param in zip(target_net.parameters(), net.parameters()):
+        target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
 class MLP(nn.Module):
     '''
     A simple ReLU MLP constructed from a list of layer widths.
@@ -34,8 +39,7 @@ class Critic(nn.Module):
         super().__init__()
         #####################################################################
         # TODO: add components as needed (if needed)
-        self.Q1_net = MLP([obs_size + action_size] + ([num_units] * num_layers) + [1])
-        self.Q2_net = MLP([obs_size + action_size] + ([num_units] * num_layers) + [1])
+        self.net = MLP([obs_size + action_size] + ([num_units] * num_layers) + [1])
         #####################################################################
 
     def forward(self, x, a):
@@ -49,15 +53,8 @@ class Critic(nn.Module):
 
         #####################################################################
         input = torch.cat((x, a), dim=1)
-        q1 = self.Q1_net(input)
-        q2 = self.Q2_net(input)
-        return q1, q2
+        return self.net(input)
 
-
-    def Q1(self, x, a):
-        input = torch.cat((x, a), dim=1)
-        q1 = self.Q1_net(input)
-        return q1
 
 
 
@@ -107,7 +104,7 @@ class Agent:
     exploration_noise: float = 0.1  # epsilon for epsilon-greedy exploration
     c = 0.1
     d = 2
-    tau = 0.005
+    tau = 0.015
     
     #########################################################################
 
@@ -137,14 +134,22 @@ class Agent:
         self.actor_target = copy.deepcopy(self.actor)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=0.001)
 
-        self.critic = Critic(
+        self.critic1 = Critic(
             obs_size=self.obs_size,
             action_size=self.action_size,
             num_layers=3,
             num_units=128
         ).to(device=Agent.device)
-        self.critic_target = copy.deepcopy(self.critic)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=0.001)
+        self.critic2 = Critic(
+            obs_size=self.obs_size,
+            action_size=self.action_size,
+            num_layers=3,
+            num_units=128
+        ).to(device=Agent.device)
+        self.critic_target1 = copy.deepcopy(self.critic1)
+        self.critic_target2 = copy.deepcopy(self.critic2)
+        params = list(self.critic1.parameters()) + list(self.critic2.parameters())
+        self.critic_optimizer = torch.optim.Adam(params, lr=0.001)
         self.t = 1
 
 
@@ -162,33 +167,34 @@ class Agent:
 
 
         #####################################################################
-        with torch.no_grad():
+        with (torch.no_grad()):
             epsilon = (torch.randn_like(action) * self.exploration_noise).clamp(-self.c, self.c)
             a_tilde = (self.actor_target(next_obs) + epsilon).clamp(self.action_low, self.action_high)
+            target_Q1 = self.critic_target1(next_obs, a_tilde)
+            target_Q2 = self.critic_target2(next_obs, a_tilde)
+            y = reward.unsqueeze(dim=-1) + (1 - done).unsqueeze(dim=-1) * self.gamma * torch.minimum(target_Q1, target_Q2)
 
-            target_Q1, target_Q2 = self.critic_target(next_obs, a_tilde)
-            target_Q = torch.minimum(target_Q1, target_Q2)
-            target_Q = reward.unsqueeze(dim=-1) + (1 - done).unsqueeze(dim=-1) * self.gamma * target_Q
+        Q1 = self.critic1(obs, action)
+        Q2 = self.critic2(obs, action)
 
-        Q1, Q2 = self.critic(obs, action)
-        critic_loss = F.mse_loss(Q1, target_Q) + F.mse_loss(Q2, target_Q)
+
+        critic_loss = F.mse_loss(Q1, y) + F.mse_loss(Q2, y)
 
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_optimizer.step()
 
         if self.t % self.d == 0:
-            actor_loss = -self.critic.Q1(obs, self.actor(obs)).mean()
+            actor_loss = -self.critic1(obs, self.actor(obs)).mean()
 
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
             self.actor_optimizer.step()
 
-            for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters()):
-                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+            interpolate_nets(self.critic1, self.critic_target1, self.tau)
+            interpolate_nets(self.critic2, self.critic_target2, self.tau)
+            interpolate_nets(self.actor, self.actor_target, self.tau)
 
-            for target_param, param in zip(self.actor_target.parameters(), self.actor.parameters()):
-                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
         self.t += 1
 
